@@ -1,0 +1,107 @@
+{
+  "services": {
+    "move": {
+      "name": "Move pointer",
+      "description": "Move the Magic Remote cursor on the TV.",
+      "fields": {
+        "entity_id": {
+          "name": "TV",
+          "description": "The LG webOS TV media player to control (default: the first loaded TV)."
+        },
+        "dx": {
+          "name": "Horizontal",
+          "description": "Pixels to move to the right (negative = left)."
+        },
+        "dy": {
+          "name": "Vertical",
+          "description": "Pixels to move down (negative = up)."
+        }
+      }
+    },
+    "click": {
+      "name": "Click",
+      "description": "Click at the current pointer position.",
+      "fields": {
+        "entity_id": {
+          "name": "TV",
+          "description": "The LG webOS TV media player to control (default: the first loaded TV)."
+        }
+      }
+    },
+    "scroll": {
+      "name": "Scroll",
+      "description": "Scroll the content under the pointer.",
+      "fields": {
+        "entity_id": {
+          "name": "TV",
+          "description": "The LG webOS TV media player to control (default: the first loaded TV)."
+        },
+        "dx": {
+          "name": "Horizontal",
+          "description": "Pixels to move to the right (negative = left)."
+        },
+        "dy": {
+          "name": "Vertical",
+          "description": "Pixels to move down (negative = up)."
+        }
+      }
+    },
+    "clear_channels": {
+      "name": "Clear channel list",
+      "description": "Empty the channel list of a TV (all TVs when none is chosen). Automatic learning then starts over.",
+      "fields": {
+        "entity_id": {
+          "name": "TV",
+          "description": "The LG webOS TV media player (default: all TVs)."
+        }
+      }
+    },
+    "scan_channels": {
+      "name": "Scan channels",
+      "description": "Learn the channels: imports the TV's own channel list when it has one, otherwise zaps through every channel once (about a second each) and returns to the channel you were watching.",
+      "fields": {
+        "entity_id": {
+          "name": "TV",
+          "description": "The LG webOS TV media player."
+        }
+      }
+    },
+    "sort_channels": {
+      "name": "Sort channels by number",
+      "description": "Sort the channel list of a TV by channel number, lowest first (channels without a number last). The list is never sorted automatically.",
+      "fields": {
+        "entity_id": {
+          "name": "TV",
+          "description": "The LG webOS TV media player (default: all TVs)."
+        }
+      }
+    }
+  },
+  "config": {
+    "step": {
+      "user": {
+        "title": "LG webOS Remote",
+        "description": "Adds the `custom:webos-touchpad` card and the pointer services. Needs the core LG webOS TV integration. Nothing to configure here: set the TV in the card."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "LG webOS Remote is already set up."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "LG webOS Remote options",
+        "description": "Moving the TV cursor (pointer mode and air pointer) sends a lot of small messages. By default they travel through Home Assistant's normal connection, which can make the cursor stutter when Home Assistant is busy or the phone is on a slow link.\n\nThe low-latency side channel is an optional shortcut: Home Assistant opens a second, secure (https) port that only handles cursor moves and passes them straight to the TV. The card uses it automatically and quietly falls back to the normal connection if it cannot connect, so leaving this on is safe.\n\nIt only starts when Home Assistant itself serves https (an SSL certificate in the `http:` settings). Behind a reverse proxy or when using Nabu Casa remote access it does not start, and the normal connection is used. Your phone must be able to reach the port (same network, or the port forwarded). Changes apply after a restart.",
+        "data": {
+          "side_channel": "Use the low-latency side channel",
+          "side_port": "Side channel port"
+        },
+        "data_description": {
+          "side_channel": "On: smoother cursor when the side channel can start and your phone can reach it. Off: always use Home Assistant's normal connection (slightly less smooth, nothing extra to open).",
+          "side_port": "TCP port for the second https connection (default 8124). Change it only if another service already uses 8124. Open or forward the same port if you use the card away from home."
+        }
+      }
+    }
+  }
+}

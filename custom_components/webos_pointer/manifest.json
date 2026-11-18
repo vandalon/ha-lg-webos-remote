@@ -1,0 +1,21 @@
+{
+  "domain": "webos_pointer",
+  "name": "LG webOS Remote",
+  "codeowners": [
+    "@vandalon"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "webostv",
+    "http",
+    "frontend",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/vandalon/ha-lg-webos-remote",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/vandalon/ha-lg-webos-remote/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "1.0.0"
+}

@@ -1,0 +1,22 @@
+move:
+  fields:
+    entity_id: {required: false, selector: {entity: {domain: media_player, integration: webostv}}}
+    dx: {required: true, selector: {number: {min: -200, max: 200}}}
+    dy: {required: true, selector: {number: {min: -200, max: 200}}}
+click:
+  fields:
+    entity_id: {required: false, selector: {entity: {domain: media_player, integration: webostv}}}
+scroll:
+  fields:
+    entity_id: {required: false, selector: {entity: {domain: media_player, integration: webostv}}}
+    dx: {required: true, selector: {number: {min: -200, max: 200}}}
+    dy: {required: true, selector: {number: {min: -200, max: 200}}}
+clear_channels:
+  fields:
+    entity_id: {required: false, selector: {entity: {domain: media_player, integration: webostv}}}
+scan_channels:
+  fields:
+    entity_id: {required: true, selector: {entity: {domain: media_player, integration: webostv}}}
+sort_channels:
+  fields:
+    entity_id: {required: false, selector: {entity: {domain: media_player, integration: webostv}}}
