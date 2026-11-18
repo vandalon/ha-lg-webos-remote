@@ -17,5 +17,5 @@
   "issue_tracker": "https://github.com/vandalon/ha-lg-webos-remote/issues",
   "requirements": [],
   "single_config_entry": true,
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
