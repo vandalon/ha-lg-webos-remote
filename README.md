@@ -10,6 +10,8 @@ can scan, edit and hide. Everything is set up in the card's visual editor, no YA
 
 ![LG webOS Remote](images/hero.png)
 
+<sub>The pictures in this README are rendered images made with the card's own code and sample data, not screenshots from a phone. They use a dark theme; the card in your dashboard follows your own theme.</sub>
+
 ## Features
 
 - **Touchpad**: swipe = arrow keys (they repeat while you keep dragging), tap = OK, tap near an edge = that arrow.
@@ -225,9 +227,6 @@ use.
 ## Support
 
 Questions and bugs: [GitHub issues](https://github.com/vandalon/ha-lg-webos-remote/issues).
-
-The pictures above are rendered with the card's real code and sample data in a dark theme (they are not photos of a TV), so the look in your
-dashboard follows your theme.
 
 ## License
 
