@@ -47,9 +47,20 @@ The button above opens HACS in your Home Assistant and offers to add this reposi
 Updates then show up in HACS like any other integration; restart Home Assistant after each update, the Python part is only loaded at
 startup. HACS can only reach a repository that is public (or that you gave HACS access to).
 
-### Manual
+### Manual (without HACS)
 
-Copy the folder `custom_components/webos_pointer` into your Home Assistant `config/custom_components` folder and restart.
+1. **Download** the package: on the repository page press **Code > Download ZIP** (or download the source of the latest release),
+   and unzip it. You only need the folder `custom_components/webos_pointer`.
+2. **Copy that folder** into the `custom_components` folder of your Home Assistant configuration, so that you end up with
+   `config/custom_components/webos_pointer/manifest.json` (create `custom_components` if it does not exist). Ways to get there:
+   - the **Samba share** add-on (the `config` share), the **File editor** or **Studio Code Server** add-on, or the **Advanced SSH** add-on;
+   - on Home Assistant Container/Core simply copy it to your configuration directory, for example
+     `cp -r custom_components/webos_pointer /path/to/config/custom_components/` on Linux or macOS.
+3. **Restart Home Assistant** (Settings > System > Restart).
+4. Continue with [Setup](#setup).
+
+To update, replace the `webos_pointer` folder with the new version and restart Home Assistant again (the Python part is only loaded at
+startup). Your channel list and card settings are kept, they are stored outside that folder.
 
 ## Setup
 
