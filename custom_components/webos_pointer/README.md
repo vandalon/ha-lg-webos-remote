@@ -34,22 +34,21 @@ can scan, edit and hide. Everything is set up in the card's visual editor, no YA
 
 ## Installation
 
-### HACS (custom repository)
+### HACS / Marketplace (custom repository)
 
 [![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=vandalon&repository=ha-lg-webos-remote&category=integration)
 
-The button above opens HACS in your Home Assistant and offers to add this repository. Or add it by hand:
+The button above opens HACS / Marketplace in your Home Assistant and offers to add this repository. Or add it by hand:
 
-1. Open **HACS** in the sidebar, then the menu (three dots, top right) **> Custom repositories**.
+1. Open **HACS** in the sidebar or Marketplace in settings (2026.11+), then the menu (three dots, top right) **> Custom repositories**.
 2. Paste `https://github.com/vandalon/ha-lg-webos-remote`, choose the type **Integration** and press **Add**.
-3. Close the dialog and open the **Marketplace** in HACS (older HACS versions call it *Explore & download repositories*).
-   Search for **LG webOS Remote** and press **Download**.
-4. **Restart Home Assistant** (Settings > System > Restart). HACS asks for this after the download as well.
+3. Close the dialog and search for **LG webOS Remote** and press **Download**.
+4. **Restart Home Assistant** (Settings > System > Restart). HA asks for this after the download as well.
 
-Updates then show up in HACS like any other integration; restart Home Assistant after each update, the Python part is only loaded at
-startup. HACS can only reach a repository that is public (or that you gave HACS access to).
+Updates then show up in HACS / Marketplace like any other integration; restart Home Assistant after each update, the Python part is only loaded at
+startup.
 
-### Manual (without HACS)
+### Manual (without HACS / Marketplace)
 
 1. **Download** the package: on the repository page press **Code > Download ZIP** (or download the source of the latest release),
    and unzip it. You only need the folder `custom_components/webos_pointer`.
