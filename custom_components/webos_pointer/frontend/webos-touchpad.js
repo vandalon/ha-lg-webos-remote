@@ -5,6 +5,12 @@
    air_pointer: true                 # show the "point with the phone" (gyro) toggle in pointer mode
    sources: true                     # show a tile per input/app the TV reports (source_list); false hides them
    hide_sources: [Live TV]           # source names to leave out
+   top_padding: 12                   # px of space above the first row
+   bottom_padding: 12                # px of space below the last row
+   screen_corners: true              # on a phone with rounded screen corners (iOS), the bottom row's outer buttons follow the screen's curve when the row sits in them
+   screen_radius: {}                 # the screen's corner radius in px: one number for all, or per screen size {"402x874": 62}; default: built in per iPhone screen size (cogwheel)
+   settings_button: true             # a cogwheel on the pad: pointer / motion / swipe speed, haptics, tile rows, which tiles and their order (saved in these options; administrators)
+   side_padding: 12                  # px of space at the card's left and right edge (0 = edge to edge)
    source_order: [HDMI 1, Netflix]   # show ONLY these tiles, in this order (names as shown, or "HDMI n"); empty = all tiles
    live_tv: true                     # a "Live TV" button (normal TV mode); false = hide it
    hdmi_inputs: 3                    # HDMI 1..N tiles (the TV only lists the active input, so they are always added); 0 = none
@@ -35,9 +41,11 @@
    air_deadzone: 1                   # deg/s of rotation ignored (hand tremor); raise it if the cursor drifts
    swipe_step: 46                    # px of dragging per arrow press in arrow mode (lower = more sensitive)
    haptics: true                     # buzz on taps (HA app haptic event / navigator.vibrate)
+   show_border: true                 # false = no border / shadow around the card (for pop-ups and stacks that bring their own frame)
    height: auto                      # auto (default): the card is as tall as its content and the pad keeps the ratio below;
                                      # or any CSS height (70vh, 100% = fill the pop-up/section): then the pad takes the spare space
    pad_ratio: 1.3                    # touchpad / keypad width : height ratio when height is auto
+   pad_extra: 0                      # px added to that height (e.g. 56 = the same pad as the Apple TV card with player_buttons)
    Swipe = arrow keys (keeps repeating while you drag), tap = OK, tap near an edge = that arrow. */
 // Built-in recognition of the big services and input types (matched on the source name, first hit wins). Everything else gets a neutral icon.
 // MDI 7 dropped several brand icons (AirPlay, Amazon), so AirPlay is an inline path; everything else is a built-in mdi icon.
@@ -102,15 +110,31 @@ const fetchChannels = async (hass, entity) => {
   const r = await hass.connection.sendMessagePromise({ type: "webos_pointer/channels", entity_id: entity });
   return { list: r.list || [], tv: r.tv_channels || [], numbers: Object.fromEntries((r.tv_channels || []).filter(c => c.number).map(c => [c.name.toLowerCase(), c.number])) };
 };
+const stableJson = v => JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, y) => (o[y] = x[y], o), {}) : x);   // JSON with sorted keys (to compare options)
+const esc = t => String(t).replace(/[&<>"]/g, m => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[m]);
+// Screen corner radius (pt = CSS px) per iPhone screen size ("short x long side", "@density" where two models share a size). A page cannot
+// read the model or its corner radius, but the screen size tells the family. Approximate; the cogwheel slider corrects it per screen size.
+const SCREEN_RADII = { "375x812": 41, "414x896@2": 41.5, "414x896@3": 39, "390x844": 47.33, "428x926": 53.33, "393x852": 55, "430x932": 55, "402x874": 62, "440x956": 62 };
+const screenKey = () => { const a = Math.round(Math.min(screen.width, screen.height)), b = Math.round(Math.max(screen.width, screen.height)); return a + "x" + b; };
+// Apple's continuous ("squircle") corner of radius 1, as UIKit draws it: three cubic Beziers from the side to the bottom edge.
+// Each point is [distance up from the corner along the side, distance along the bottom].
+const CONT = [
+  [[1.52866483, 0], [1.08849296, 0], [0.86840694, 0], [0.63149379, 0.07491139]],
+  [[0.63149379, 0.07491139], [0.37282383, 0.16905956], [0.16905956, 0.37282383], [0.07491139, 0.63149379]],
+  [[0.07491139, 0.63149379], [0, 0.86840694], [0, 1.08849296], [0, 1.52866483]]];
 class WebosTouchpad extends HTMLElement {
   setConfig(c) {
     if (!c || !c.entity) throw new Error("entity (the LG webOS media player) is required");
-    this._c = { pointer: true, air_pointer: true, sources: true, haptics: true, side_port: 8124, live_tv: true, tv_controls: "auto", channels: [], channel_sort: "manual", keypad: true, hdmi_inputs: 3, inputs: [], source_order: [], source_style: "tiles", source_colors: true, source_rows: 1, source_icons: {}, pointer_speed: 1, pointer_invert_x: false, pointer_invert_y: false, air_speed: 1, air_invert_x: false, air_invert_y: false, air_swap_axes: false, air_deadzone: 1, swipe_step: 46, height: "auto", pad_ratio: 1.3, hide_sources: [], ...c };
+    if (this._raw && this._c && stableJson(c) === stableJson(this._raw)) return;   // the dashboard handing back what the cogwheel just saved: nothing to rebuild
+    this._raw = JSON.parse(JSON.stringify(c)); this._saved = JSON.parse(JSON.stringify(c));
+    this._merge(c); this._build();
+  }
+  _merge(c) {   // the card's options with their defaults
+    this._c = { settings_button: true, pointer: true, air_pointer: true, sources: true, haptics: true, show_border: true, side_port: 8124, live_tv: true, tv_controls: "auto", channels: [], channel_sort: "manual", keypad: true, hdmi_inputs: 3, inputs: [], source_order: [], source_style: "tiles", source_colors: true, source_rows: 1, source_icons: {}, pointer_speed: 1, pointer_invert_x: false, pointer_invert_y: false, air_speed: 1, air_invert_x: false, air_invert_y: false, air_swap_axes: false, air_deadzone: 1, swipe_step: 46, height: "auto", pad_ratio: 1.3, hide_sources: [], ...c };
     if (Array.isArray(this._c.source_icons)) {   // list form from the visual editor -> map by source name
       const m = {}; this._c.source_icons.forEach(i => { if (i && i.name && (i.icon || i.color)) m[i.name] = { icon: i.icon || undefined, color: i.color || undefined }; });
       this._c = { ...this._c, source_icons: m };
     }
-    this._build();
   }
   set hass(h) { this._hass = h; this._refresh(); }
   getCardSize() { return 6; }
@@ -119,14 +143,202 @@ class WebosTouchpad extends HTMLElement {
     const e = Object.keys(hass.states).find(i => i.startsWith("media_player.") && hass.states[i].attributes.source_list);
     return { entity: e || "media_player.lg_tv" };
   }
-  disconnectedCallback() { if (this._air) this._setAir(false); }
+  // screen_corners: when the card's bottom button row sits in the bottom corners of a phone screen with rounded corners (iOS: there is a
+  // home-indicator area, env(safe-area-inset-bottom) > 0), the outer bottom corners of its first and last button follow the screen's curve
+  // (screen_radius, px; the page cannot read it: about 55 on recent iPhones, 39 on the X / XS / 11 Pro), round the same centre as the screen's corner (see below).
+  // screen_radius: one number for every screen, or per screen size {"402x874": 62, ...} (what the cogwheel slider stores); else SCREEN_RADII, else 55
+  _radiusOwn() {   // the value set for this screen (a number for all screens counts too); null = automatic (by model)
+    const o = this._c.screen_radius, k = screenKey(), kd = k + "@" + Math.round(window.devicePixelRatio || 1);
+    if (Number(o) > 0) return Number(o);
+    if (o && typeof o === "object") { const v = Number(o[kd] ?? o[k]); if (v > 0) return v; }
+    return null;
+  }
+  _radius() {
+    const o = this._c.screen_radius, k = screenKey(), kd = k + "@" + Math.round(window.devicePixelRatio || 1);
+    if (Number(o) > 0) return Number(o);
+    if (o && typeof o === "object") { const v = Number(o[kd] ?? o[k]); if (v > 0) return v; }
+    return SCREEN_RADII[kd] || SCREEN_RADII[k] || (Math.min(screen.width, screen.height) > 500 ? 18 : 55);   // unknown: a tablet (iPad corners are about 18) or a newer phone
+  }
+  // A rounded container round the card (a pop-up floating on a desktop or tablet, a dialog): the nearest one whose bottom corners are rounded and
+  // hold the bottom row. Its corner is a plain CSS rounding (a quarter ellipse rx x ry); the outer button gets the rounding round the same centre:
+  // rx - gap x ry - gap. Only while the button sits in that corner (both gaps under 0.6 of the radius, about equal), as with the screen.
+  _containerCorners(rb, bs, reset) {
+    for (let n = this.parentElement || (this.getRootNode() && this.getRootNode().host); n && n !== document.documentElement; n = n.parentElement || (n.getRootNode && n.getRootNode().host)) {
+      if (n.nodeType !== 1) continue;
+      const cs = getComputedStyle(n), rad = v => { const a = String(v).split(" ").map(parseFloat); return [a[0] || 0, a.length > 1 ? a[1] || 0 : a[0] || 0]; };
+      const bl = rad(cs.borderBottomLeftRadius), br = rad(cs.borderBottomRightRadius);
+      if (!(bl[0] > 0 || br[0] > 0)) continue;
+      const cr = n.getBoundingClientRect();
+      if (cr.bottom >= window.innerHeight - 1) return false;   // reaches the screen's bottom edge (a bottom sheet): the screen's corners count
+      if (cr.bottom < rb.bottom - 1 || cr.left > rb.left + 1 || cr.right < rb.right - 1 || cr.bottom - rb.bottom > 60) continue;   // not round the bottom row
+      const fit = (r, gx, gy) => r[0] > 0 && gx >= -1 && gy >= -1 && gx < r[0] * 0.6 && gy < r[1] * 0.6 && Math.abs(gx - gy) <= Math.max(6, 0.2 * Math.min(r[0], r[1]))
+        ? Math.round(Math.max(12, r[0] - gx)) + "px " + Math.round(Math.max(12, r[1] - gy)) + "px" : "";
+      const f = bs[0].getBoundingClientRect(), l = bs[bs.length - 1].getBoundingClientRect(), g = [f.left - cr.left, cr.bottom - f.bottom, cr.right - l.right, cr.bottom - l.bottom];
+      if (g.every(v => Math.abs(v) < 2)) continue;   // a wrapper flush round the card (a stack, a grid cell): the corner that counts is further out
+      const left = fit(bl, g[0], g[1]), right = fit(br, g[2], g[3]);
+      if (!left && !right) continue;   // not in this one's corner: perhaps in an outer one
+      reset(); bs[0].style.borderBottomLeftRadius = left; bs[bs.length - 1].style.borderBottomRightRadius = right;
+      return true;
+    }
+    return false;
+  }
+  _onFixed() {   // inside something fixed to the screen (a pop-up / bottom sheet)? On a scrolling page the row only passes the corners now and then
+    for (let n = this; n && n !== document.documentElement; n = n.parentElement || (n.getRootNode && n.getRootNode().host)) {
+      if (n.nodeType === 1 && getComputedStyle(n).position === "fixed") return true;
+    }
+    return false;
+  }
+  _corners() {
+    const sr = this.shadowRoot, card = sr && sr.querySelector("ha-card"); if (!card) return;
+    const rows = [...sr.querySelectorAll(".row")].filter(r => r.offsetParent && r.getBoundingClientRect().height);
+    this._cornOn = false;
+    const reset = () => sr.querySelectorAll(".row button").forEach(b => { if (b.style.borderBottomLeftRadius || b.style.borderBottomRightRadius || b.style.clipPath) { b.style.borderBottomLeftRadius = b.style.borderBottomRightRadius = b.style.clipPath = ""; } });
+    if (this._c.screen_corners === false || !rows.length) { reset(); return; }
+    let probe = sr.querySelector("#safeb"); if (!probe) { probe = document.createElement("div"); probe.id = "safeb"; probe.style.cssText = "position:fixed;left:0;bottom:0;width:0;height:env(safe-area-inset-bottom,0px);pointer-events:none;visibility:hidden"; sr.appendChild(probe); }
+    const safe = probe.offsetHeight, row = rows.reduce((a, b) => b.getBoundingClientRect().bottom > a.getBoundingClientRect().bottom ? b : a), rb = row.getBoundingClientRect();
+    const vw = document.documentElement.clientWidth || window.innerWidth, vh = window.innerHeight, gy = vh - rb.bottom;
+    const bs = [...row.querySelectorAll("button")].filter(b => !b.hidden && b.offsetParent);
+    if (bs.length >= 2 && this._containerCorners(rb, bs, reset)) return;   // a rounded pop-up / dialog round the card: follow its corners
+    if (!(safe > 0) || gy < -2 || gy > safe + 40 || bs.length < 2 || !this._onFixed()) { reset(); return; }
+    // iPhone screen corners are Apple's "continuous" curve (not a circle): it starts 1.5287 R from the corner and bends gently. Its shape is
+    // the one UIKit uses for continuous rounded rectangles: three cubic Beziers (control points in units of R, measured from the corner, see
+    // CONT below). That curve is moved inward by the gap and the outer button is cut to it (clip-path polygon), so its edge runs parallel to
+    // the screen's. Only while the button sits in the screen's corner (both gaps small and about equal).
+    const R = this._radius();
+    reset();
+    const cut = (b, right) => {
+      const r = b.getBoundingClientRect(), gx = right ? vw - r.right : r.left; if (!(gx <= R * 0.35 && gy <= R * 0.35 && Math.abs(gx - gy) <= Math.max(6, R * 0.15))) return;   // really in the corner: close to both edges, about as close to each (else the cut looks wrong)
+      const d = (gx + gy) / 2, w = r.width, h = r.height, pts = [];
+      // the screen's bottom-left corner, corner at (0, vh); mirrored for the right side. CONT points are (along the side, along the bottom)
+      for (const seg of CONT) for (let n = (seg === CONT[0] ? 0 : 1); n <= 10; n++) {
+        const P = seg.map(([up, along]) => [along * R, vh - up * R]);
+        const t = n / 10, u = 1 - t, b0 = u * u * u, b1 = 3 * u * u * t, b2 = 3 * u * t * t, b3 = t * t * t;
+        const x = b0 * P[0][0] + b1 * P[1][0] + b2 * P[2][0] + b3 * P[3][0], y = b0 * P[0][1] + b1 * P[1][1] + b2 * P[2][1] + b3 * P[3][1];
+        const dx = 3 * u * u * (P[1][0] - P[0][0]) + 6 * u * t * (P[2][0] - P[1][0]) + 3 * t * t * (P[3][0] - P[2][0]), dy = 3 * u * u * (P[1][1] - P[0][1]) + 6 * u * t * (P[2][1] - P[1][1]) + 3 * t * t * (P[3][1] - P[2][1]), len = Math.hypot(dx, dy) || 1;
+        const ox = x + d * dy / len, oy = y - d * dx / len;   // inward normal (the screen's inside is up and to the right)
+        const sx = right ? vw - ox : ox, lx = Math.max(0, Math.min(w, sx - r.left)), ly = Math.max(0, Math.min(h, oy - r.top));
+        pts.push(lx.toFixed(1) + "px " + ly.toFixed(1) + "px");
+      }
+      // the curve runs from the side (top) to the bottom; the polygon goes round the rest of the button
+      const rest = right ? [`${w}px 0px`, `0px 0px`, `0px ${h}px`] : [`0px 0px`, `${w}px 0px`, `${w}px ${h}px`];
+      b.style[right ? "borderBottomRightRadius" : "borderBottomLeftRadius"] = "0px";
+      b.style.clipPath = `polygon(${rest.join(",")},${pts.slice().reverse().join(",")})`;   // from the bottom along the curve up the outer side
+    };
+    cut(bs[0], false); cut(bs[bs.length - 1], true); this._cornOn = !!(bs[0].style.clipPath || bs[bs.length - 1].style.clipPath);
+  }
+  connectedCallback() { clearInterval(this._cornT); this._cornT = setInterval(() => this._corners(), 600);   // the card moves (pop-up sliding in): checked now and then, only reads positions
+    // app suspended (iOS): the side-channel socket dies silently but still reads OPEN, so pointer moves vanish until the card is rebuilt -> drop it on every hide/resume
+    if (!this._onHide) this._onHide = () => { if (document.visibilityState === "hidden") this._saveNow(); this._dropSide(); };
+    document.addEventListener("visibilitychange", this._onHide); window.addEventListener("pageshow", this._onHide); }
+  _dropSide() { const w = this._sideWs; this._sideWs = null; this._sideReady = false; this._sideFail = 0; if (w) { w.onclose = w.onerror = null; try { w.close(); } catch (e) {} } }
+  disconnectedCallback() { clearInterval(this._cornT); if (this._air) this._setAir(false); document.removeEventListener("visibilitychange", this._onHide); window.removeEventListener("pageshow", this._onHide); this._dropSide(); this._saveNow(); }
+  // Quick settings (the cogwheel on the pad, settings_button): they change the card's own options in the dashboard, saved when the panel
+  // closes (saving redraws the dashboard, which would close the panel). Needs an administrator. pointer / air / swipe = pointer_speed,
+  // air_speed, swipe_step; rows = source_rows; the tiles shown and their order = source_order (and hide_sources).
+  _prefs(p) {
+    const r = this._raw || {};
+    if (p === undefined) return { radius: this._radiusOwn(), pointer: r.pointer_speed, air: r.air_speed, swipe: r.swipe_step, haptics: r.haptics, rows: r.source_rows, apps: {}, order: [] };
+    const n = { ...r }, set = (k, v, dflt) => { if (v === undefined || v === null || v === dflt) delete n[k]; else n[k] = v; };
+    set("pointer_speed", p.pointer, 1); set("air_speed", p.air, 1); set("swipe_step", p.swipe, 46); set("haptics", p.haptics, true); set("source_rows", p.rows);
+    if (p.radius !== undefined && p.radius !== this._radiusOwn()) {   // per screen size (other phones keep theirs); null = automatic by model
+      const m = r.screen_radius && typeof r.screen_radius === "object" ? { ...r.screen_radius } : {}, k = screenKey();
+      Object.keys(m).forEach(x => { if (x === k || x.startsWith(k + "@")) delete m[x]; });
+      if (p.radius !== null) m[k] = Number(p.radius);
+      if (Object.keys(m).length) n.screen_radius = m; else delete n.screen_radius; }
+    if (Object.keys(p.apps || {}).length || (p.order || []).length) {   // tiles shown and their order -> source_order (shown tiles, in order); shown TV sources leave hide_sources
+      let rows = this._tileRows(); if ((p.order || []).length) rows = p.order.map(k => rows.find(x => x.k === k)).filter(Boolean).concat(rows.filter(x => !p.order.includes(x.k)));
+      const vis = x => (p.apps && typeof p.apps[x.k] === "boolean") ? p.apps[x.k] : x.vis, shown = rows.filter(vis);
+      n.source_order = shown.map(x => x.key);
+      if (Array.isArray(n.hide_sources)) { const sk = shown.map(x => x.name.toLowerCase()); n.hide_sources = n.hide_sources.filter(h => !sk.includes(String(h).toLowerCase())); if (!n.hide_sources.length) delete n.hide_sources; }
+    }
+    this._raw = n; this._merge(n); this._refresh(); this._saveSoon();
+  }
+  _tileRows() {   // every tile (shown first, in order, then the hidden ones); key = what source_order stores (HDMI tiles by "HDMI n", they keep it when the TV renames them)
+    const st = this._st(), names = learnedNames(this._c, this._ls.bind(this)), all = buildItems({ ...this._c, source_order: [], hide_sources: [] }, st, names), shown = buildItems(this._c, st, names);
+    const row = (i, vis) => ({ name: i.name, key: i.alias || i.name, k: (i.alias || i.name).toLowerCase(), vis }), ks = shown.map(i => (i.alias || i.name).toLowerCase());
+    return shown.map(i => row(i, true)).concat(all.filter(i => !ks.includes((i.alias || i.name).toLowerCase())).map(i => row(i, false)));
+  }
+  _isAdmin() { return !!(this._hass && this._hass.user && this._hass.user.is_admin); }
+  _say(t) { this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message: t }, bubbles: true, composed: true })); }
+  _saveSoon() { clearTimeout(this._saveT); this._unsaved = true; if (this._panelOn()) return; this._saveT = setTimeout(() => this._saveNow(), 700); }
+  _saveNow() { clearTimeout(this._saveT); if (!this._unsaved) return; this._unsaved = false; this._saveDashboard(); }
+  _panelOn() { const b = this.shadowRoot && this.shadowRoot.querySelector("#prefs"); return !!(b && b.classList.contains("on")); }
+  async _saveDashboard() {   // write this card's options into the dashboard it is on (the card that had the options as last saved)
+    if (!this._isAdmin()) { this._say("Only an administrator can change the card's settings"); return; }
+    const conn = this._hass.connection, seg = (location.pathname.split("/")[1] || "").trim(), url = !seg || seg === "lovelace" ? null : seg;
+    try {
+      const conf = await conn.sendMessagePromise({ type: "lovelace/config", url_path: url, force: false });
+      const want = stableJson(this._saved || {}), hits = [];
+      const walk = o => { if (Array.isArray(o)) { o.forEach(walk); return; } if (!o || typeof o !== "object") return;
+        if (o.type === "custom:webos-touchpad" && o.entity === this._raw.entity) hits.push(o); Object.values(o).forEach(walk); };
+      walk(conf);
+      const same = hits.filter(h => stableJson(h) === want), target = same.length ? same : hits.length === 1 ? hits : [];
+      if (!target.length) { this._say("Could not find this card in the dashboard to save"); return; }
+      target.forEach(h => { Object.keys(h).forEach(k => delete h[k]); Object.assign(h, JSON.parse(JSON.stringify(this._raw))); });
+      await conn.sendMessagePromise({ type: "lovelace/config/save", url_path: url, config: conf });
+      this._saved = JSON.parse(JSON.stringify(this._raw));
+    } catch (e) { this._say("Saving the card's settings failed: " + (e && e.message || e)); }
+  }
+  _prefsOpen(open) {
+    const box = this.shadowRoot.querySelector("#prefs"); box.classList.toggle("on", open); if (!open) { this._saveNow(); return; }
+    const c = this._c;
+    const row = (k, label, min, max, step, val, fmt) => `<label>${label}<span id="pv-${k}">${fmt(val)}</span><input type="range" data-pk="${k}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`;
+    const x1 = v => "x" + Number(v).toFixed(1), FMT = { pointer: x1, air: x1, swipe: v => v + " px", rows: v => Number(v) ? String(v) : "all", radius: v => v + " px" };
+    const rows = this._tileRows(), nr = Math.max(0, Math.floor(Number(c.source_rows))) || 0;
+    box.innerHTML = `<div class="ph">Settings<button class="pclose" title="Close"><ha-icon icon="mdi:check"></ha-icon></button></div>` +
+      (c.pointer ? row("pointer", "Pointer speed", 0.2, 4, 0.1, Number(c.pointer_speed) || 1, FMT.pointer) : "") +
+      (c.pointer && c.air_pointer ? row("air", "Motion pointer speed", 0.2, 4, 0.1, Number(c.air_speed) || 1, FMT.air) : "") +
+      row("swipe", "Swipe distance per arrow (lower = more sensitive)", 15, 120, 1, Number(c.swipe_step) || 46, FMT.swipe) +
+      `<label class="pt">Haptics<input type="checkbox" data-pk="haptics" ${c.haptics ? "checked" : ""}></label>` +
+      (this._cornOn ? `<label class="pt">Screen corner automatic (by phone model)<input type="checkbox" data-pk="rauto" ${this._radiusOwn() === null ? "checked" : ""}></label>` +
+        (this._radiusOwn() !== null ? row("radius", `Screen corner for this phone (${screenKey()}): match the buttons below to the screen's curve`, 30, 80, 1, this._radius(), FMT.radius) : "") : "") +
+      (rows.length && c.sources ? `<div class="psec">Sources</div>` + row("rows", "Rows of tiles", 0, 4, 1, nr, FMT.rows) +
+        rows.map(r => `<div class="papp${r.vis ? "" : " off"}"><input type="checkbox" data-app="${esc(r.k)}" ${r.vis ? "checked" : ""}><span class="pname">${esc(r.name)}</span><span class="pdrag" title="Hold and drag to reorder"><ha-icon icon="mdi:drag-horizontal-variant"></ha-icon></span></div>`).join("") : "") +
+      (this._isAdmin() ? `<div class="pnote">Changes are saved in the card's settings on this dashboard, for everyone.</div>` : `<div class="pnote">Only an administrator can change the card's settings.</div>`);
+    box.querySelectorAll("input[type=range]").forEach(i => i.oninput = () => { const k = i.dataset.pk, q = this._prefs(); q[k] = Number(i.value); this._prefs(q); if (k === "radius") this._corners(); box.querySelector("#pv-" + k).textContent = FMT[k](i.value); });
+    const ra = box.querySelector('input[data-pk="rauto"]'); if (ra) ra.onchange = () => { const q = this._prefs(); q.radius = ra.checked ? null : this._radius(); this._prefs(q); this._corners(); const top = box.scrollTop; this._prefsOpen(true); box.scrollTop = top; };   // automatic: no slider
+    box.querySelector('input[data-pk="haptics"]').onchange = e => { const q = this._prefs(); q.haptics = e.target.checked; this._prefs(q); };
+    box.querySelectorAll("input[data-app]").forEach(i => i.onchange = () => { const q = this._prefs(); q.apps = { [i.dataset.app]: i.checked }; this._prefs(q); i.closest(".papp").classList.toggle("off", !i.checked); });
+    const apps = [...box.querySelectorAll(".papp")], EASE = "cubic-bezier(.2,.8,.2,1)", GAP = 12;
+    apps.forEach(rowEl => {   // grab the handle and drag: the row lifts, follows the finger, the others flow aside; on release the order is stored
+      const h = rowEl.querySelector(".pdrag"); let st = null;
+      const place = () => {
+        const dy = st.y - st.y0 + box.scrollTop - st.s0;
+        rowEl.style.transform = "translateY(" + dy + "px) scale(1.03)";
+        const dc = st.c[st.i] + dy; let to = st.i;
+        if (dy > 0) { for (let k = st.i + 1; k < st.c.length; k++) if (st.c[k] <= dc) to = k; } else { for (let k = st.i - 1; k >= 0; k--) if (st.c[k] >= dc) to = k; }
+        if (to === st.to) return; st.to = to; this._buzz();
+        apps.forEach((x, k) => { if (x === rowEl) return; const sh = to > st.i && k > st.i && k <= to ? -(st.h[st.i] + GAP) : to < st.i && k >= to && k < st.i ? st.h[st.i] + GAP : 0; x.style.transform = sh ? "translateY(" + sh + "px)" : ""; });
+      };
+      h.addEventListener("pointerdown", e => {
+        e.preventDefault(); e.stopPropagation(); try { h.setPointerCapture(e.pointerId); } catch (err) {}
+        st = { i: apps.indexOf(rowEl), y0: e.clientY, y: e.clientY, s0: box.scrollTop, h: apps.map(x => x.offsetHeight), c: apps.map(x => x.offsetTop + x.offsetHeight / 2) }; st.to = st.i;
+        apps.forEach(x => { if (x !== rowEl) x.style.transition = "transform .22s " + EASE; });
+        rowEl.classList.add("lift"); rowEl.style.transition = "transform .18s " + EASE; rowEl.style.transform = "scale(1.03)"; this._buzz();
+        st.timer = setInterval(() => { const rb = box.getBoundingClientRect(); if (st.y > rb.bottom - 50) box.scrollTop += 10; else if (st.y < rb.top + 50) box.scrollTop -= 10; else return; place(); }, 16);   // near the edge the list scrolls along
+      });
+      h.addEventListener("pointermove", e => { if (st) { st.y = e.clientY; place(); } });
+      const drop = () => {
+        if (!st) return; const s = st; st = null; clearInterval(s.timer);
+        let off = 0; if (s.to > s.i) for (let k = s.i + 1; k <= s.to; k++) off += s.h[k] + GAP; else for (let k = s.to; k < s.i; k++) off -= s.h[k] + GAP;
+        rowEl.style.transition = "transform .22s " + EASE; rowEl.style.transform = "translateY(" + off + "px) scale(1)";
+        setTimeout(() => {
+          if (s.to !== s.i) { const ks = this._tileRows().map(r => r.k), [it] = ks.splice(s.i, 1); ks.splice(s.to, 0, it); const q = this._prefs(); q.order = ks; this._prefs(q); }
+          const top = box.scrollTop; this._prefsOpen(true); box.scrollTop = top;
+        }, 240);
+      };
+      h.addEventListener("pointerup", drop); h.addEventListener("pointercancel", drop);
+    });
+    box.querySelector(".pclose").onclick = () => this._prefsOpen(false);
+    if (!this._isAdmin()) box.querySelectorAll("input, .pdrag").forEach(x => { x.disabled = true; x.style.pointerEvents = "none"; x.style.opacity = ".5"; });
+  }
 
   _build() {
     const c = this._c;
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     this.shadowRoot.innerHTML = `
 <style>
-ha-card{padding:12px;display:flex;flex-direction:column;gap:10px;height:${c.height};box-sizing:border-box;overflow:hidden;position:relative;--ratio:${Number(c.pad_ratio) > 0 ? Number(c.pad_ratio) : 1.3}}
+ha-card{${c.show_border === false ? "border:none !important;box-shadow:none !important;--ha-card-border-width:0px;" : ""}padding:${Number(c.top_padding) >= 0 && c.top_padding !== "" && c.top_padding !== null && c.top_padding !== undefined ? Number(c.top_padding) : 12}px ${Number(c.side_padding) >= 0 && c.side_padding !== "" && c.side_padding !== null && c.side_padding !== undefined ? Number(c.side_padding) : 12}px ${Number(c.bottom_padding) >= 0 && c.bottom_padding !== "" && c.bottom_padding !== null && c.bottom_padding !== undefined ? Number(c.bottom_padding) : 12}px;display:flex;flex-direction:column;gap:10px;height:${c.height};box-sizing:border-box;overflow:hidden;position:relative;--ratio:${Number(c.pad_ratio) > 0 ? Number(c.pad_ratio) : 1.3}}
 ha-card.auto #pad,ha-card.auto #keys{flex:none;min-height:0;aspect-ratio:var(--ratio)}   /* height: auto = content-sized card, pad and keypad share one ratio-based box */
 button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var(--primary-text-color);font:500 13px var(--paper-font-body1_-_font-family,system-ui)}
 .src{display:grid;grid-template-columns:repeat(var(--cols,1),max-content);justify-content:start;align-content:start;gap:8px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;touch-action:pan-x pan-y;scrollbar-width:none;flex:0 0 auto}   /* source_rows lines, evenly filled; a line wider than the card scrolls sideways (all lines together) */
@@ -150,7 +362,11 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
 #pad.flash{background:color-mix(in srgb,var(--primary-color) 25%,var(--secondary-background-color))}
 #pad.ptr .u,#pad.ptr .d,#pad.ptr .l,#pad.ptr .r{opacity:0}
 .tg{position:absolute;top:8px;width:38px;height:38px;border-radius:50%;background:rgba(127,127,127,.15);opacity:.75;display:none;align-items:center;justify-content:center;padding:0}
-#ptr{right:8px}#air{right:54px}
+#ptr{right:8px}#air{right:54px}#cog{left:8px}
+#prefs{display:none;position:absolute;inset:0;z-index:3;padding:12px 16px;box-sizing:border-box;overflow:auto;background:var(--card-background-color,#1c1c1c);border-radius:20px;flex-direction:column;gap:12px;font-size:14px;color:var(--primary-text-color);touch-action:auto;user-select:auto}#prefs.on{display:flex}   /* settings_button: quick settings */
+#prefs .ph{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:16px}#prefs .pclose{border:0;background:rgba(127,127,127,.15);color:inherit;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center}
+#prefs label{display:grid;grid-template-columns:1fr auto;gap:4px 8px}#prefs label input[type=range]{grid-column:1 / 3;width:100%;accent-color:var(--primary-color)}#prefs label.pt{align-items:center}#prefs span{opacity:.7}
+#prefs .psec{margin-top:6px;font-weight:600;opacity:.8}#prefs .papp{display:grid;grid-template-columns:auto 1fr 40px;gap:6px;align-items:center;border-radius:10px;background:var(--card-background-color,#1c1c1c);position:relative;min-height:36px}#prefs .papp.lift{z-index:3;box-shadow:0 10px 28px rgba(0,0,0,.5);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color,#1c1c1c))}#prefs .pdrag{display:flex;align-items:center;justify-content:center;height:34px;cursor:grab;touch-action:none;opacity:.7}#prefs .pname{opacity:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#prefs .papp.off .pname{opacity:.45}#prefs .papp ha-icon{--mdc-icon-size:20px}#prefs .pnote{font-size:13px;opacity:.65}
 .tg.on{background:var(--primary-color);color:var(--text-primary-color,#fff);opacity:1}
 .tv{display:none;flex-direction:column;gap:8px;flex:0 0 auto}
 .tv.on{display:flex}
@@ -181,6 +397,8 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
   <div id="pad">
     <button class="tg" id="ptr" title="Pointer"><ha-icon icon="mdi:cursor-default"></ha-icon></button>
     <button class="tg" id="air" title="Point with the phone"><ha-icon icon="mdi:cellphone-wireless"></ha-icon></button>
+    <button class="tg" id="cog" title="Settings"><ha-icon icon="mdi:cog-outline"></ha-icon></button>
+    <div id="prefs"></div>
     <ha-icon class="u" icon="mdi:chevron-up"></ha-icon><ha-icon class="d" icon="mdi:chevron-down"></ha-icon>
     <ha-icon class="l" icon="mdi:chevron-left"></ha-icon><ha-icon class="r" icon="mdi:chevron-right"></ha-icon>
     <ha-icon class="logo" icon="mdi:television-classic"></ha-icon>
@@ -217,6 +435,7 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
     this._ptrPref = this._ls("webosTouchpadPointer") === "1";
     $("#ptr").onclick = () => { this._buzz(); this._setPtr(!this._ptr); if (!this._ptr) this._setAir(false); };
     $("#air").onclick = () => { this._buzz(); this._setAir(!this._air); };
+    $("#cog").onclick = () => { this._buzz(); this._prefsOpen(!$("#prefs").classList.contains("on")); };
     // The tile strip scrolls on its own: while it can scroll, its touch/wheel events must not reach the page / pop-up gestures
     // (swipe to close, two-finger gestures, ...), otherwise both react at once. At the ends the browser hands the scroll to the page.
     const strip = $("#src");
@@ -262,6 +481,7 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
     const c = this._c, st = this._st(), $ = s => this.shadowRoot.querySelector(s);
     const show = !!c.pointer;
     $("#ptr").style.display = show ? "flex" : "none";
+    $("#cog").style.display = c.settings_button !== false ? "flex" : "none";
     $("#air").style.display = show && c.air_pointer ? "flex" : "none";
     if (!show && this._air) this._setAir(false);
     const want = show && this._ptrPref;
@@ -376,7 +596,7 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
     }
     const chnShown = sr.querySelector("#chn").style.display !== "none";
     if (!chnShown && (this._c.tv_controls || "auto") !== "never") t += 28;   // the channel name line (18 px + gap) is hidden too
-    const h = Math.round(w / (Number(this._c.pad_ratio) > 0 ? Number(this._c.pad_ratio) : 1.3) + t);
+    const h = Math.round(w / (Number(this._c.pad_ratio) > 0 ? Number(this._c.pad_ratio) : 1.3) + t + (Number(this._c.pad_extra) || 0));
     [pad, keys].forEach(e => { e.style.aspectRatio = "auto"; e.style.height = h + "px"; });
   }
 
@@ -441,7 +661,7 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
       if (!ptm) ptm = setTimeout(flush, 16);
     };
     el.addEventListener("pointerdown", e => {
-      if (e.target.closest && e.target.closest(".tg")) return;
+      if (e.target.closest && (e.target.closest(".tg") || e.target.closest("#prefs"))) return;
       px = e.clientX; py = e.clientY; pt = e.timeStamp;
       id = e.pointerId; x0 = sx = e.clientX; y0 = sy = e.clientY; t0 = Date.now(); moved = 0;
       try { el.setPointerCapture(id); } catch (err) {}
@@ -475,19 +695,25 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent;border:0;color:var
       flash(); this._send(k);
     });
     el.addEventListener("pointercancel", () => { id = null; });
+    // A pop-up around the card must not react to swipes on the pad: custom_components/tv_touchpad (swipe down to close, side swipes) skips gestures that
+    // start on an element flagged __ptzOn, and the touch/pointer events stay on the pad for handlers further up. Harmless without that component.
+    el.__ptzOn = true;
+    ["touchstart", "touchmove", "touchend", "touchcancel", "mousedown", "mousemove", "mouseup", "pointerdown", "pointermove", "pointerup", "wheel"]
+      .forEach(t => el.addEventListener(t, e => e.stopPropagation(), { passive: true }));
   }
 }
 if (!customElements.get("webos-touchpad")) customElements.define("webos-touchpad", WebosTouchpad);
 
 // Visual editor (card picker / "Edit card"): HA's ha-form with selectors, so no YAML is needed.
-const DEFAULTS = { pointer: true, air_pointer: true, sources: true, haptics: true, pointer_speed: 1, pointer_invert_x: false, pointer_invert_y: false,
-  air_speed: 1, air_invert_x: false, air_invert_y: false, air_swap_axes: false, air_deadzone: 1, swipe_step: 46, side_port: 8124, height: "auto", pad_ratio: 1.3, live_tv: true, tv_controls: "auto", keypad: true, channel_sort: "manual", hdmi_inputs: 3, source_style: "tiles", source_colors: true, source_rows: 1 };
+const DEFAULTS = { screen_corners: true, settings_button: true, pointer: true, air_pointer: true, sources: true, haptics: true, show_border: true, pointer_speed: 1, pointer_invert_x: false, pointer_invert_y: false,
+  air_speed: 1, air_invert_x: false, air_invert_y: false, air_swap_axes: false, air_deadzone: 1, swipe_step: 46, side_port: 8124, height: "auto", pad_ratio: 1.3, pad_extra: 0, live_tv: true, tv_controls: "auto", keypad: true, channel_sort: "manual", hdmi_inputs: 3, source_style: "tiles", source_colors: true, source_rows: 1 };
 const num = (min, max, step) => ({ number: { min, max, step, mode: "slider" } });
 const FIELD_LABELS = { app_id: "Input", enabled: "Show on the card", name: "Name", number: "Channel number (optional)", app_id: "webOS app id", icon: "Icon", color: "Colour (for example #e50914)" };
 const LABELS = {
   entity: ["TV", "The LG webOS TV media player (core LG webOS TV integration)."],
   height: ["Card height", "auto = as tall as the content (default). Or any CSS value, for example 70vh or 100% to fill a pop-up; the touchpad then takes the spare space."],
   pad_ratio: ["Touchpad shape (width / height)", "Only with height auto. Higher = flatter touchpad, lower = taller. The keypad uses the same size."],
+  pad_extra: ["Extra touchpad height", "Pixels added to the touchpad (and keypad) height, on top of the shape above. 56 = the same pad as the Apple TV card with its player buttons."],
   pointer: ["Pointer toggle", "Show the Magic Remote pointer button on the pad (drag = move the TV cursor, tap = click)."],
   air_pointer: ["Motion (air) pointer toggle", "Show the button that lets you move the cursor by turning your phone."],
   sources: ["Source tiles", "Show a tile for every input / app the TV reports."],
@@ -503,6 +729,14 @@ const LABELS = {
   source_rows: ["Source rows", "How many rows of source tiles to show (they scroll sideways when there are more). 0 = show all of them, wrapped."],
   source_icons: ["Source icons", "Give a source (by name) its own icon and/or colour. Overrides the built-in recognition."],
   haptics: ["Haptics", "Vibrate on taps (HA app haptics or the browser vibration)."],
+  side_padding: ["Side margin (px)", "Space at the card's left and right edge; 0 = edge to edge."],
+  hide_sources: ["Sources to hide", "Leave these sources out (when no tiles are picked above)."],
+  top_padding: ["Top margin (px)", "Space above the first row; 0 = none."],
+  bottom_padding: ["Bottom margin (px)", "Space below the last row of buttons; 0 = none."],
+  screen_corners: ["Follow the screen's corners", "On a phone with rounded screen corners (iOS), when the bottom button row sits in the bottom corners of the screen (a pop-up), its outer buttons follow the screen's curve."],
+  screen_radius: ["Screen corner radius (px)", "Usually leave empty: the card knows the iPhone screen sizes, and the cogwheel sets it for the phone you use. One number = for every screen; or per screen size, for example 402x874: 62."],
+  settings_button: ["Settings button", "A cogwheel on the touchpad with quick settings: pointer, motion and swipe speed, haptics, tile rows, which tiles show and their order. Changes are saved in these options (administrators only)."],
+  show_border: ["Card border", "Show the border and shadow around the card. Turn it off when the card sits inside a pop-up or stack that has its own frame."],
   pointer_speed: ["Touch pointer speed", "1 = default, lower = slower and more precise, higher = faster."],
   pointer_invert_x: ["Invert left / right", "Flip the horizontal direction of the touch pointer."],
   pointer_invert_y: ["Invert up / down", "Flip the vertical direction of the touch pointer."],
@@ -574,6 +808,7 @@ class WebosTouchpadEditor extends HTMLElement {
     if (m) { const n = parseFloat(String(ch.number || "").replace(",", ".")); return Number.isFinite(n) && n >= +m[1] && n <= +m[2]; }
     return ((ch.name || "") + " " + (ch.number || "")).toLowerCase().includes(q);
   }
+  _buzz() { try { window.dispatchEvent(new CustomEvent("haptic", { detail: "light" })); } catch (e) {} try { navigator.vibrate && navigator.vibrate(8); } catch (e) {} }
   _scrollParent(el) { for (let n = el.parentElement || (el.getRootNode() && el.getRootNode().host); n; n = n.parentElement || (n.getRootNode && n.getRootNode().host)) { const cs = getComputedStyle(n); if (/(auto|scroll)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 1) return n; } return document.scrollingElement; }
   _visibleRows() { return [...this._lRows.children].filter(r => r._ch && r.style.display !== "none"); }
   _applyFilter() { [...this._lRows.children].forEach(r => { if (r._ch) r.style.display = this._matches(r._ch, this._lFilter.value) ? "flex" : "none"; }); this._selInfo(); }
@@ -592,7 +827,6 @@ class WebosTouchpadEditor extends HTMLElement {
     const list = this._srvE.list, save = () => this._saveChannels(list.filter(x => x.name && x.name.trim()));
     const inputCss = "padding:8px 10px;border-radius:8px;border:1px solid var(--divider-color);background:var(--card-background-color);color:var(--primary-text-color);font:inherit;min-width:0;box-sizing:border-box";
     const iconBtn = (icon, title, fn) => { const b = document.createElement("button"); const ic = document.createElement("ha-icon"); ic.setAttribute("icon", icon); ic.style.setProperty("--mdc-icon-size", "20px"); b.appendChild(ic); b.title = title; b.style.cssText = "flex:none;width:30px;height:30px;border:0;background:none;color:var(--secondary-text-color);cursor:pointer;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center"; if (fn) b.addEventListener("click", fn); return b; };
-    let drag = null;
     list.forEach(ch => {
       const row = document.createElement("div"); row._ch = ch; row.style.cssText = "display:flex;flex-wrap:wrap;align-items:center;gap:2px;padding:0 6px;border:1px solid var(--divider-color);border-radius:10px;min-height:34px;background:var(--card-background-color);box-sizing:border-box;transition:opacity .15s";
       if (ch.enabled === false) row.style.opacity = ".4";
@@ -646,16 +880,46 @@ class WebosTouchpadEditor extends HTMLElement {
         num.addEventListener("input", () => { ch.number = num.value.trim(); sub.textContent = ch.number; save(); });
         panel.append(name, num); row.appendChild(panel);
       }
-      // drag by the handle: the row follows the finger/pointer, the model order is taken from the DOM when it is dropped
-      if (!this._selMode) handle.addEventListener("pointerdown", e => { e.preventDefault(); drag = row; try { handle.setPointerCapture(e.pointerId); } catch (err) {} row.style.boxShadow = "0 4px 14px rgba(0,0,0,.45)"; row.style.zIndex = "1"; });
-      if (!this._selMode) handle.addEventListener("pointermove", e => {
-        if (drag !== row) return;
-        const others = [...rows.children].filter(r => r !== row);
-        const before = others.find(r => { const b = r.getBoundingClientRect(); return e.clientY < b.top + b.height / 2; });
-        if (before) { if (row.nextElementSibling !== before) rows.insertBefore(row, before); } else if (rows.lastElementChild !== row) rows.appendChild(row);
-      });
-      const drop = () => { if (drag !== row) return; drag = null; row.style.boxShadow = ""; row.style.zIndex = ""; list.splice(0, list.length, ...[...rows.children].map(r => r._ch).filter(Boolean)); save(); };
-      if (!this._selMode) { handle.addEventListener("pointerup", drop); handle.addEventListener("pointercancel", drop); }
+      if (!this._selMode) {   // drag by the handle: the row lifts (scale + shadow), follows the finger and the others flow out of its way; it settles into its slot on release
+        const EASE = "cubic-bezier(.2,.8,.2,1)", GAP = 4;
+        let st = null;
+        const place = () => {   // the lifted row follows the pointer; the rows it has passed flow aside by its height
+          if (!st) return;
+          const dy = st.y - st.y0 + (st.scroller ? st.scroller.scrollTop - st.s0 : 0);
+          if (!st.moved && Math.abs(dy) > 2) { st.moved = true; row.style.transition = "box-shadow .18s"; }
+          row.style.transform = "translateY(" + dy + "px) scale(1.03)";
+          const dc = st.c[st.i] + dy; let to = st.i;
+          if (dy > 0) { for (let k = st.i + 1; k < st.c.length; k++) if (st.c[k] <= dc) to = k; } else { for (let k = st.i - 1; k >= 0; k--) if (st.c[k] >= dc) to = k; }
+          if (to === st.to) return;
+          st.to = to; this._buzz();
+          st.els.forEach((x, k) => { if (x === row) return; const sh = to > st.i && k > st.i && k <= to ? -(st.h[st.i] + GAP) : to < st.i && k >= to && k < st.i ? st.h[st.i] + GAP : 0; x.style.transform = sh ? "translateY(" + sh + "px)" : ""; });
+        };
+        handle.addEventListener("pointerdown", e => {
+          e.preventDefault(); try { handle.setPointerCapture(e.pointerId); } catch (err) {}
+          const els = [...rows.children].filter(x => x._ch), scroller = this._scrollParent(rows);
+          st = { els, i: els.indexOf(row), y0: e.clientY, y: e.clientY, scroller, s0: scroller ? scroller.scrollTop : 0, moved: false, h: els.map(x => x.offsetHeight), c: els.map(x => x.offsetTop + x.offsetHeight / 2) };
+          st.to = st.i;
+          els.forEach(x => { if (x !== row) x.style.transition = "transform .22s " + EASE; });
+          row.style.cssText += ";position:relative;z-index:3;cursor:grabbing;box-shadow:0 10px 28px rgba(0,0,0,.5);background:color-mix(in srgb,var(--primary-color) 10%,var(--card-background-color))";
+          row.style.transition = "transform .18s " + EASE + ", box-shadow .18s"; row.style.transform = "scale(1.03)";   // pops up on grab
+          this._buzz();
+          st.timer = setInterval(() => {   // near the top / bottom edge the list scrolls along
+            if (!st.scroller) return;
+            const rb = st.scroller === document.scrollingElement ? { top: 0, bottom: innerHeight } : st.scroller.getBoundingClientRect();
+            if (st.y > rb.bottom - 70) st.scroller.scrollTop += 12; else if (st.y < rb.top + 70) st.scroller.scrollTop -= 12; else return;
+            place();
+          }, 16);
+        });
+        handle.addEventListener("pointermove", e => { if (st) { st.y = e.clientY; place(); } });
+        const drop = () => {
+          if (!st) return; const s = st; st = null; clearInterval(s.timer);
+          let off = 0; if (s.to > s.i) for (let k = s.i + 1; k <= s.to; k++) off += s.h[k] + GAP; else for (let k = s.to; k < s.i; k++) off -= s.h[k] + GAP;
+          row.style.transition = "transform .22s " + EASE + ", box-shadow .22s"; row.style.boxShadow = "0 0 0 transparent";
+          row.style.transform = "translateY(" + off + "px) scale(1)";   // settles into its slot
+          setTimeout(() => { if (s.to !== s.i) { const [it] = list.splice(s.i, 1); list.splice(s.to, 0, it); save(); this._renderList(); } else this._renderList(); }, 240);
+        };
+        handle.addEventListener("pointerup", drop); handle.addEventListener("pointercancel", drop);
+      }
       rows.appendChild(row);
     });
     if (this._selMode) this._applyFilter();
@@ -751,8 +1015,14 @@ class WebosTouchpadEditor extends HTMLElement {
       { name: "entity", required: true, selector: { entity: { filter: [{ integration: "webostv", domain: "media_player" }] } } },
       { name: "height", selector: { text: {} } },
       { name: "pad_ratio", selector: { number: { min: 0.8, max: 2.5, step: 0.05, mode: "slider" } } },
+      { name: "pad_extra", selector: { number: { min: 0, max: 120, step: 1, mode: "slider", unit_of_measurement: "px" } } },
+      { name: "side_padding", selector: { number: { min: 0, max: 24, step: 1, mode: "slider", unit_of_measurement: "px" } } },
+      { name: "top_padding", selector: { number: { min: 0, max: 24, step: 1, mode: "slider", unit_of_measurement: "px" } } },
+      { name: "bottom_padding", selector: { number: { min: 0, max: 24, step: 1, mode: "slider", unit_of_measurement: "px" } } },
+      { name: "screen_corners", selector: { boolean: {} } },
+      { name: "screen_radius", selector: { object: {} } },
       { name: "", type: "grid", schema: [{ name: "pointer", selector: { boolean: {} } }, { name: "air_pointer", selector: { boolean: {} } },
-                                         { name: "sources", selector: { boolean: {} } }, { name: "haptics", selector: { boolean: {} } }] },
+                                         { name: "sources", selector: { boolean: {} } }, { name: "haptics", selector: { boolean: {} } }, { name: "show_border", selector: { boolean: {} } }, { name: "settings_button", selector: { boolean: {} } }] },
       { type: "expandable", title: "Channels (Live TV)", icon: "mdi:television-guide", schema: [
         { name: "tv_controls", selector: { select: { mode: "dropdown", options: [{ value: "auto", label: "Auto (only on Live TV)" }, { value: "always", label: "Always" }, { value: "never", label: "Never" }] } } },
         { name: "channel_sort", selector: { select: { mode: "dropdown", options: [{ value: "manual", label: "Order of the list (default)" }, { value: "number", label: "Always show sorted by channel number" }] } } },
@@ -760,6 +1030,7 @@ class WebosTouchpadEditor extends HTMLElement {
         { name: "live_tv", selector: { boolean: {} } }] },
       { type: "expandable", title: "Inputs and sources", icon: "mdi:video-input-hdmi", schema: [
         { name: "source_order", selector: { select: { multiple: true, reorder: true, custom_value: true, mode: "dropdown", options: this._tileNames() } } },
+        { name: "hide_sources", selector: { select: { multiple: true, custom_value: true, mode: "dropdown", options: this._tileNames() } } },
         { name: "hdmi_inputs", selector: { number: { min: 0, max: 8, step: 1, mode: "slider" } } },
         { name: "source_style", selector: { select: { mode: "dropdown", options: [{ value: "tiles", label: "Tiles (icon + name)" }, { value: "chips", label: "Chips (name only)" }] } } },
         { name: "source_rows", selector: { number: { min: 0, max: 6, step: 1, mode: "slider" } } },
